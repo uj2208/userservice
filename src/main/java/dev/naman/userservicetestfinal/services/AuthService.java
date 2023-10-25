@@ -6,28 +6,35 @@ import dev.naman.userservicetestfinal.models.SessionStatus;
 import dev.naman.userservicetestfinal.models.User;
 import dev.naman.userservicetestfinal.repositories.SessionRepository;
 import dev.naman.userservicetestfinal.repositories.UserRepository;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.MacAlgorithm;
 import lombok.Setter;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.MultiValueMap;
 import org.springframework.util.MultiValueMapAdapter;
 import org.springframework.web.bind.annotation.PostMapping;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Optional;
+import javax.crypto.SecretKey;
+import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
+import java.util.*;
 
 @Service
 public class AuthService {
     private UserRepository userRepository;
     private SessionRepository sessionRepository;
 
-    public AuthService(UserRepository userRepository, SessionRepository sessionRepository) {
+    private BCryptPasswordEncoder bCryptPasswordEncoder;
+
+    public AuthService(UserRepository userRepository, SessionRepository sessionRepository, BCryptPasswordEncoder bCryptPasswordEncoder) {
         this.userRepository = userRepository;
         this.sessionRepository = sessionRepository;
+        this.bCryptPasswordEncoder = bCryptPasswordEncoder;
     }
 
     public ResponseEntity<UserDto> login(String email, String password) {
@@ -39,11 +46,26 @@ public class AuthService {
 
         User user = userOptional.get();
 
-        if (!user.getPassword().equals(password)) {
-            return null;
+        if (!bCryptPasswordEncoder.matches(password, user.getPassword())){
+            throw  new RuntimeException("Invalid Password");
         }
 
-        String token = RandomStringUtils.randomAlphanumeric(30);
+
+
+        // Create a test key suitable for the desired HMAC-SHA algorithm:
+        MacAlgorithm alg = Jwts.SIG.HS256; //or HS384 or HS256
+        SecretKey key = alg.key().build();
+        Map<String, Object>jwtMap = new HashMap<>();
+        jwtMap.put("userId", user.getId());
+        jwtMap.put(email, user.getEmail());
+        jwtMap.put("roles",user.getRoles());
+        jwtMap.put("createdAt",new Date());
+        jwtMap.put("expiryAt", new Date(LocalDate.now().plusDays(3).toEpochDay()));
+        String token = Jwts.builder().setClaims(jwtMap).signWith(key).compact();
+
+
+
+
 
         Session session = new Session();
         session.setSessionStatus(SessionStatus.ACTIVE);
@@ -51,7 +73,7 @@ public class AuthService {
         session.setUser(user);
         sessionRepository.save(session);
 
-        UserDto userDto = new UserDto();
+        UserDto userDto = UserDto.from(user);
 
 //        Map<String, String> headers = new HashMap<>();
 //        headers.put(HttpHeaders.SET_COOKIE, token);
@@ -86,7 +108,7 @@ public class AuthService {
     public UserDto signUp(String email, String password) {
         User user = new User();
         user.setEmail(email);
-        user.setPassword(password);
+        user.setPassword(bCryptPasswordEncoder.encode(password));
         
         User savedUser = userRepository.save(user);
 
